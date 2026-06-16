@@ -3,9 +3,170 @@
 <head>
   <meta charset="UTF-8">
   <title>ADR Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 24px; color: #1a1a1a; }
+    h1 { font-size: 22px; font-weight: 500; margin-bottom: 8px; }
+    p.sub { font-size: 14px; color: #666; margin-bottom: 32px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    .tab { font-size: 13px; padding: 5px 12px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; background: white; color: #666; }
+    .tab.active { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+    label { font-size: 13px; color: #666; display: block; margin-bottom: 6px; margin-top: 16px; }
+    textarea, input[type="text"] { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+    textarea { min-height: 120px; resize: vertical; }
+    textarea:focus, input:focus { outline: none; border-color: #999; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .divider { border: none; border-top: 1px solid #eee; margin: 24px 0; }
+    .btn { width: 100%; padding: 12px; background: #1a1a1a; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; margin-top: 16px; }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .result { background: #f7f7f5; border-radius: 12px; padding: 20px; margin-top: 24px; display: none; }
+    .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .result-label { font-size: 13px; color: #666; font-weight: 500; }
+    .action-btns { display: flex; gap: 8px; }
+    .action-btn { font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid #ddd; background: white; cursor: pointer; }
+    .action-btn:hover { background: #f0f0f0; }
+    .result-content { font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+    .status { font-size: 13px; color: #666; text-align: center; margin-top: 12px; min-height: 20px; }
+    .success { color: #2d6a4f; }
+    .error { color: #c0392b; }
+  </style>
 </head>
 <body>
+
   <h1>ADR Generator</h1>
-  <p>Bygget af Emma under Builder Week 2026</p>
+  <p class="sub">Udfyld felterne og gem designbeslutningen direkte i Slite.</p>
+
+  <label>Indsæt din rå tekst</label>
+  <div class="tabs">
+    <button class="tab active" onclick="setTab(this, 'Figma-kommentar')">Figma-kommentar</button>
+    <button class="tab" onclick="setTab(this, 'Slack-besked')">Slack-besked</button>
+    <button class="tab" onclick="setTab(this, 'Mødenoter')">Mødenoter</button>
+  </div>
+  <textarea id="rawInput" placeholder="Indsæt din Figma-kommentar her..."></textarea>
+
+  <hr class="divider">
+
+  <div class="row">
+    <div>
+      <label>Beslutningstager</label>
+      <input type="text" id="decider" placeholder="fx Emma Lykke">
+    </div>
+    <div>
+      <label>Figma-link</label>
+      <input type="text" id="figmaLink" placeholder="Indsæt Figma URL">
+    </div>
+  </div>
+
+  <button class="btn" id="saveBtn" onclick="save()">Gem i Slite</button>
+
+  <div class="result" id="result">
+    <div class="result-header">
+      <span class="result-label">Designbeslutning</span>
+      <div class="action-btns">
+        <button class="action-btn" onclick="copyResult()">Kopiér</button>
+        <a id="sliteLink" class="action-btn" href="#" target="_blank">Åbn i Slite</a>
+      </div>
+    </div>
+    <div class="result-content" id="resultContent"></div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <script>
+    const SLITE_TOKEN = '';
+    const PARENT_NOTE_ID = 'IhGEfdpw1gtBW8';
+    let currentSource = 'Figma-kommentar';
+
+    function setTab(el, source) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      currentSource = source;
+      document.getElementById('rawInput').placeholder = `Indsæt din ${source.toLowerCase()} her...`;
+    }
+
+    function buildDocument() {
+      const raw = document.getElementById('rawInput').value.trim();
+      const decider = document.getElementById('decider').value.trim() || '(ikke angivet)';
+      const figmaLink = document.getElementById('figmaLink').value.trim() || '(ikke angivet)';
+      const today = new Date().toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric' });
+
+      return `Designbeslutning
+
+Dato: ${today}
+Beslutningstager: ${decider}
+Kilde: ${currentSource}
+Figma-link: ${figmaLink}
+
+---
+
+${raw}`;
+    }
+
+    async function save() {
+      const raw = document.getElementById('rawInput').value.trim();
+      if (!raw) {
+        setStatus('Indsæt venligst noget tekst først.', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      btn.innerText = 'Gemmer...';
+      setStatus('');
+
+      const content = buildDocument();
+      const today = new Date().toLocaleDateString('da-DK');
+      const title = `Designbeslutning — ${today}`;
+
+      try {
+        const response = await fetch('https://api.slite.com/v1/notes', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${SLITE_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: title,
+            content: content,
+            parentNoteId: PARENT_NOTE_ID
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.url) {
+          document.getElementById('resultContent').innerText = content;
+          document.getElementById('sliteLink').href = data.url;
+          document.getElementById('result').style.display = 'block';
+          setStatus('✓ Gemt i Slite', 'success');
+        } else {
+          setStatus('Noget gik galt. Prøv igen.', 'error');
+          console.log(data);
+        }
+      } catch (err) {
+        setStatus('Kunne ikke oprette forbindelse til Slite.', 'error');
+      }
+
+      btn.disabled = false;
+      btn.innerText = 'Gem i Slite';
+    }
+
+    function copyResult() {
+      const text = document.getElementById('resultContent').innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector('.action-btn');
+        btn.innerText = 'Kopieret ✓';
+        setTimeout(() => btn.innerText = 'Kopiér', 2000);
+      });
+    }
+
+    function setStatus(msg, type) {
+      const el = document.getElementById('status');
+      el.innerText = msg;
+      el.className = 'status ' + (type || '');
+    }
+  </script>
+
 </body>
 </html>
