@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <title>Figma Comments → Slite</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Inter, system-ui, sans-serif;
+      font-size: 13px;
+      color: #1a1a1a;
+      background: #fff;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #111;
+    }
+
+    label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 4px;
+      color: #444;
+    }
+
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #d1d1d1;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus { border-color: #6366f1; }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+
+    .row { display: flex; gap: 8px; }
+
+    button {
+      flex: 1;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, background 0.15s;
+    }
+
+    button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #btn-fetch   { background: #6366f1; color: #fff; }
+    #btn-save    { background: #10b981; color: #fff; }
+
+    #status {
+      min-height: 20px;
+      font-size: 12px;
+      color: #555;
+    }
+
+    #status.error { color: #dc2626; }
+    #status.success { color: #059669; }
+
+    #comment-list {
+      border: 1px solid #e5e5e5;
+      border-radius: 6px;
+      max-height: 260px;
+      overflow-y: auto;
+      display: none;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .comment-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      line-height: 1.45;
+    }
+
+    .comment-item:last-child { border-bottom: none; }
+
+    .comment-meta {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 3px;
+    }
+
+    .comment-text { color: #222; }
+
+    #empty-msg {
+      display: none;
+      color: #888;
+      font-size: 12px;
+      text-align: center;
+      padding: 12px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #ececec;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Figma Comments → Slite</h2>
+
+  <div class="field">
+    <label for="figma-token">Figma Personal Access Token</label>
+    <input id="figma-token" type="password" placeholder="figd_…" autocomplete="off" />
+  </div>
+
+  <div class="field">
+    <label for="slite-token">Slite API Token</label>
+    <input id="slite-token" type="password" placeholder="sl_…" autocomplete="off" />
+  </div>
+
+  <hr class="divider" />
+
+  <div class="row">
+    <button id="btn-fetch">Hent kommentarer</button>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="comment-list"></div>
+  <div id="empty-msg">Ingen kommentarer fundet på den valgte frame.</div>
+
+  <div class="row">
+    <button id="btn-save" disabled>Gem i Slite</button>
+  </div>
+
+  <script>
+    const SLITE_PARENT_NOTE_ID = "IhGEfdpw1gtBW8";
+
+    const figmaTokenInput = document.getElementById("figma-token");
+    const sliteTokenInput  = document.getElementById("slite-token");
+    const btnFetch         = document.getElementById("btn-fetch");
+    const btnSave          = document.getElementById("btn-save");
+    const statusEl         = document.getElementById("status");
+    const commentList      = document.getElementById("comment-list");
+    const emptyMsg         = document.getElementById("empty-msg");
+
+    // Persist tokens — localStorage may be blocked in Figma's sandbox
+    try {
+      figmaTokenInput.value = localStorage.getItem("figma_token") || "";
+      sliteTokenInput.value  = localStorage.getItem("slite_token") || "";
+      figmaTokenInput.addEventListener("change", () =>
+        localStorage.setItem("figma_token", figmaTokenInput.value.trim()));
+      sliteTokenInput.addEventListener("change", () =>
+        localStorage.setItem("slite_token", sliteTokenInput.value.trim()));
+    } catch (e) {}
+
+    let fetchedComments = [];   // [{author, message, created_at}]
+    let currentNodeName = "";
+
+    // ── Utilities ────────────────────────────────────────────────────────────
+
+    function setStatus(text, type = "") {
+      statusEl.textContent = text;
+      statusEl.className   = type;
+    }
+
+    function renderComments(comments) {
+      commentList.innerHTML = "";
+      commentList.style.display = "none";
+      emptyMsg.style.display    = "none";
+      btnSave.disabled          = true;
+
+      if (comments.length === 0) {
+        emptyMsg.style.display = "block";
+        return;
+      }
+
+      commentList.style.display = "flex";
+      comments.forEach((c) => {
+        const item = document.createElement("div");
+        item.className = "comment-item";
+
+        const date = new Date(c.created_at).toLocaleString("da-DK", {
+          dateStyle: "short", timeStyle: "short"
+        });
+
+        item.innerHTML = `
+          <div class="comment-meta">${escHtml(c.author)} · ${date}</div>
+          <div class="comment-text">${escHtml(c.message)}</div>
+        `;
+        commentList.appendChild(item);
+      });
+
+      btnSave.disabled = false;
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // ── Figma API ─────────────────────────────────────────────────────────────
+
+    async function fetchComments(fileKey, nodeId, token) {
+      // Figma REST API: GET /v1/files/:file_key/comments
+      const url = `https://api.figma.com/v1/files/${fileKey}/comments`;
+      const res  = await fetch(url, {
+        headers: { "X-FIGMA-TOKEN": token }
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Figma API fejl ${res.status}`);
+      }
+
+      const data = await res.json();
+      // Filter to comments that reference the selected node
+      const all = data.comments ?? [];
+      const filtered = all.filter((c) => {
+        const anchor = c.client_meta?.node_id ?? c.resolved_by?.node_id ?? null;
+        // Include if anchored to this node, or include ALL if nodeId is unknown
+        return anchor === nodeId || anchor == null;
+      });
+
+      return (filtered.length > 0 ? filtered : all).map((c) => ({
+        author:     c.user?.handle ?? "Ukendt",
+        message:    c.message,
+        created_at: c.created_at,
+      }));
+    }
+
+    // ── Slite API ─────────────────────────────────────────────────────────────
+
+    async function saveToSlite(nodeName, comments, token) {
+      const lines = comments.map((c) => {
+        const date = new Date(c.created_at).toLocaleString("da-DK", {
+          dateStyle: "short", timeStyle: "short"
+        });
+        return `**${c.author}** (${date})\n${c.message}`;
+      });
+
+      const content = `# Kommentarer: ${nodeName}\n\n${lines.join("\n\n---\n\n")}`;
+
+      const res = await fetch("https://api.slite.com/v1/notes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title:        `Kommentarer: ${nodeName}`,
+          markdown:     content,
+          parentNoteId: SLITE_PARENT_NOTE_ID,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Slite API fejl ${res.status}`);
+      }
+
+      return await res.json();
+    }
+
+    // ── Button handlers ───────────────────────────────────────────────────────
+
+    btnFetch.addEventListener("click", () => {
+      const figmaToken = figmaTokenInput.value.trim();
+      alert("Token længde: " + figmaToken.length);
+      if (!figmaToken) {
+        setStatus("Indtast dit Figma token.", "error");
+        return;
+      }
+      setStatus("Henter markering fra Figma…");
+      parent.postMessage({ pluginMessage: { type: "get-selection" } }, "*");
+    });
+
+    btnSave.addEventListener("click", async () => {
+      const sliteToken = sliteTokenInput.value.trim();
+      if (!sliteToken) {
+        setStatus("Indtast dit Slite token.", "error");
+        return;
+      }
+      if (fetchedComments.length === 0) {
+        setStatus("Ingen kommentarer at gemme.", "error");
+        return;
+      }
+
+      btnSave.disabled = true;
+      setStatus("Gemmer i Slite…");
+
+      try {
+        const note = await saveToSlite(currentNodeName, fetchedComments, sliteToken);
+        setStatus(`Gemt! Note oprettet: "${note.title || currentNodeName}"`, "success");
+      } catch (err) {
+        setStatus(`Fejl ved gem: ${err.message}`, "error");
+        btnSave.disabled = false;
+      }
+    });
+
+    // ── Messages from plugin main thread ──────────────────────────────────────
+
+    window.onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+
+      if (msg.type === "error") {
+        setStatus(msg.text, "error");
+        return;
+      }
+
+      if (msg.type === "selection") {
+        const { nodeId, nodeName, fileKey } = msg;
+        currentNodeName = nodeName;
+
+        if (!fileKey) {
+          setStatus("Kan ikke bestemme fil-nøgle. Sørg for at pluginnet kører i en gemt Figma-fil.", "error");
+          return;
+        }
+
+        const figmaToken = figmaTokenInput.value.trim();
+        setStatus(`Henter kommentarer for "${nodeName}"…`);
+        btnFetch.disabled = true;
+
+        try {
+          fetchedComments = await fetchComments(fileKey, nodeId, figmaToken);
+          renderComments(fetchedComments);
+          setStatus(
+            fetchedComments.length > 0
+              ? `${fetchedComments.length} kommentar(er) hentet.`
+              : "Ingen kommentarer."
+          );
+        } catch (err) {
+          setStatus(`Fejl: ${err.message}`, "error");
+        } finally {
+          btnFetch.disabled = false;
+        }
+      }
+    };
+  </script>
+</body>
+</html>

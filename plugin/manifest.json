@@ -1,0 +1,12 @@
+{
+  "name": "Figma Comments → Slite",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["https://api.figma.com", "https://api.slite.com"],
+    "devAllowedDomains": ["https://api.figma.com", "https://api.slite.com"],
+    "reasoning": "Fetches Figma file comments and saves them to Slite"
+  }
+}
